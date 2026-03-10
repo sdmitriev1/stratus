@@ -1,0 +1,21 @@
+[package]
+name = "stratusd"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+tokio-stream = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+hyper-util = { workspace = true }
+tower = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }
