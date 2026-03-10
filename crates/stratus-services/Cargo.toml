@@ -1,0 +1,5 @@
+[package]
+name = "stratus-services"
+version.workspace = true
+edition.workspace = true
+license.workspace = true

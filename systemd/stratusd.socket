@@ -1,0 +1,9 @@
+[Unit]
+Description=Stratus VM Orchestrator Socket
+
+[Socket]
+ListenStream=/run/stratus/stratusd.sock
+SocketMode=0660
+
+[Install]
+WantedBy=sockets.target
