@@ -1,18 +1,22 @@
 use tonic::{Request, Response, Status};
 
-use crate::proto::{
-    stratus_service_server::StratusService, GetStatusRequest, GetStatusResponse,
-};
+use crate::proto::{GetStatusRequest, GetStatusResponse, stratus_service_server::StratusService};
 
 pub struct StratusServer {
     start_time: std::time::Instant,
 }
 
-impl StratusServer {
-    pub fn new() -> Self {
+impl Default for StratusServer {
+    fn default() -> Self {
         Self {
             start_time: std::time::Instant::now(),
         }
+    }
+}
+
+impl StratusServer {
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 

@@ -12,8 +12,7 @@ use stratusd::server::StratusServer;
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -34,9 +33,8 @@ async fn main() -> Result<()> {
 
     info!(socket = %config.socket_path.display(), "stratusd listening");
 
-    let stratus_service = proto::stratus_service_server::StratusServiceServer::new(
-        StratusServer::new(),
-    );
+    let stratus_service =
+        proto::stratus_service_server::StratusServiceServer::new(StratusServer::new());
 
     Server::builder()
         .add_service(stratus_service)

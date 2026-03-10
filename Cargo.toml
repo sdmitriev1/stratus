@@ -11,6 +11,11 @@ members = [
     "crates/stratus-resources",
 ]
 
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
 tonic = "0.12"

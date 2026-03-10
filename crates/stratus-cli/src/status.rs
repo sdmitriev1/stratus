@@ -3,8 +3,8 @@ use hyper_util::rt::TokioIo;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
 
-use crate::proto::stratus_service_client::StratusServiceClient;
 use crate::proto::GetStatusRequest;
+use crate::proto::stratus_service_client::StratusServiceClient;
 
 pub async fn run(socket: &str) -> Result<()> {
     let channel = connect(socket).await?;

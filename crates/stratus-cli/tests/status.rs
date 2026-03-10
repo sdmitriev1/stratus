@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use hyper_util::rt::TokioIo;
+use stratusd::proto::GetStatusRequest;
 use stratusd::proto::stratus_service_client::StratusServiceClient;
 use stratusd::proto::stratus_service_server::StratusServiceServer;
-use stratusd::proto::GetStatusRequest;
 use stratusd::server::StratusServer;
 use tokio::net::UnixListener;
 use tokio_stream::wrappers::UnixListenerStream;
