@@ -1,0 +1,20 @@
+kind: Network
+name: default
+---
+kind: Subnet
+name: default-subnet
+network: default
+cidr: 10.100.0.0/24
+gateway: 10.100.0.1
+nat: masquerade
+---
+kind: SecurityGroup
+name: allow-ssh
+rules:
+  - direction: ingress
+    protocol: tcp
+    port: 22
+    remote_cidr: 0.0.0.0/0
+  - direction: ingress
+    protocol: icmp
+    remote_cidr: 0.0.0.0/0

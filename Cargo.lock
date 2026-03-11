@@ -1059,6 +1059,7 @@ dependencies = [
  "hyper-util",
  "prost",
  "serde_json",
+ "serde_yaml",
  "stratus-resources",
  "stratus-store",
  "stratusd",

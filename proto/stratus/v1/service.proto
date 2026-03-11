@@ -4,8 +4,12 @@ package stratus.v1;
 
 import "stratus/v1/status.proto";
 import "stratus/v1/store.proto";
+import "stratus/v1/resources.proto";
 
 service StratusService {
   rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
   rpc DumpStore(DumpStoreRequest) returns (DumpStoreResponse);
+  rpc Apply(ApplyRequest) returns (ApplyResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
 }
