@@ -1,6 +1,8 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use hyper_util::rt::TokioIo;
+use stratus_store::WatchableStore;
 use stratusd::proto::GetStatusRequest;
 use stratusd::proto::stratus_service_client::StratusServiceClient;
 use stratusd::proto::stratus_service_server::StratusServiceServer;
@@ -12,14 +14,17 @@ use tower::service_fn;
 
 /// Start a gRPC server on the given Unix socket path.
 /// Returns a shutdown sender — drop it to stop the server.
-fn start_server(socket_path: &std::path::Path) -> tokio::sync::oneshot::Sender<()> {
+fn start_server(
+    socket_path: &std::path::Path,
+    store: Arc<WatchableStore>,
+) -> tokio::sync::oneshot::Sender<()> {
     let listener = UnixListener::bind(socket_path).expect("failed to bind socket");
     let stream = UnixListenerStream::new(listener);
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
     tokio::spawn(async move {
         Server::builder()
-            .add_service(StratusServiceServer::new(StratusServer::new()))
+            .add_service(StratusServiceServer::new(StratusServer::new(store)))
             .serve_with_incoming_shutdown(stream, async {
                 rx.await.ok();
             })
@@ -28,6 +33,12 @@ fn start_server(socket_path: &std::path::Path) -> tokio::sync::oneshot::Sender<(
     });
 
     tx
+}
+
+/// Create a WatchableStore backed by a tempdir.
+fn temp_store(dir: &std::path::Path) -> Arc<WatchableStore> {
+    let db_path = dir.join("test.db");
+    Arc::new(WatchableStore::open(&db_path).expect("failed to open store"))
 }
 
 /// Connect a gRPC client to the given Unix socket path.
@@ -50,8 +61,9 @@ async fn connect(socket_path: std::path::PathBuf) -> StratusServiceClient<Channe
 async fn daemon_binds_unix_socket() {
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("test.sock");
+    let store = temp_store(dir.path());
 
-    let _shutdown = start_server(&sock);
+    let _shutdown = start_server(&sock, store);
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Socket file should exist
@@ -68,7 +80,8 @@ async fn daemon_removes_socket_file_allows_rebind() {
     let sock = dir.path().join("test.sock");
 
     // Start and stop first server
-    let shutdown = start_server(&sock);
+    let store = temp_store(dir.path());
+    let shutdown = start_server(&sock, store);
     tokio::time::sleep(Duration::from_millis(50)).await;
     drop(shutdown);
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -79,7 +92,8 @@ async fn daemon_removes_socket_file_allows_rebind() {
     }
 
     // Second server should bind successfully
-    let _shutdown2 = start_server(&sock);
+    let store2 = temp_store(dir.path());
+    let _shutdown2 = start_server(&sock, store2);
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(sock.exists());
 }
@@ -88,8 +102,9 @@ async fn daemon_removes_socket_file_allows_rebind() {
 async fn get_status_returns_version_and_uptime() {
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("test.sock");
+    let store = temp_store(dir.path());
 
-    let _shutdown = start_server(&sock);
+    let _shutdown = start_server(&sock, store);
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let mut client = connect(sock).await;
@@ -107,8 +122,9 @@ async fn get_status_returns_version_and_uptime() {
 async fn get_status_uptime_increases() {
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("test.sock");
+    let store = temp_store(dir.path());
 
-    let _shutdown = start_server(&sock);
+    let _shutdown = start_server(&sock, store);
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let mut client = connect(sock).await;
@@ -135,8 +151,9 @@ async fn get_status_uptime_increases() {
 async fn multiple_concurrent_clients() {
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("test.sock");
+    let store = temp_store(dir.path());
 
-    let _shutdown = start_server(&sock);
+    let _shutdown = start_server(&sock, store);
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let mut handles = vec![];

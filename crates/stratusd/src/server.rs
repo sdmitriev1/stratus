@@ -1,22 +1,22 @@
+use std::sync::Arc;
+
+use stratus_store::WatchableStore;
 use tonic::{Request, Response, Status};
 
 use crate::proto::{GetStatusRequest, GetStatusResponse, stratus_service_server::StratusService};
 
 pub struct StratusServer {
     start_time: std::time::Instant,
-}
-
-impl Default for StratusServer {
-    fn default() -> Self {
-        Self {
-            start_time: std::time::Instant::now(),
-        }
-    }
+    #[allow(dead_code)]
+    store: Arc<WatchableStore>,
 }
 
 impl StratusServer {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(store: Arc<WatchableStore>) -> Self {
+        Self {
+            start_time: std::time::Instant::now(),
+            store,
+        }
     }
 }
 
