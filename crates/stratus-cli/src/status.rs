@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
-use hyper_util::rt::TokioIo;
-use tonic::transport::{Channel, Endpoint, Uri};
-use tower::service_fn;
 
+use crate::connect::connect;
 use crate::proto::GetStatusRequest;
 use crate::proto::stratus_service_client::StratusServiceClient;
 
@@ -20,22 +18,4 @@ pub async fn run(socket: &str) -> Result<()> {
     println!("uptime:  {}", status.uptime);
 
     Ok(())
-}
-
-async fn connect(socket: &str) -> Result<Channel> {
-    let socket = socket.to_string();
-
-    // tonic requires a URI but ignores it for Unix sockets
-    let channel = Endpoint::from_static("http://[::]:50051")
-        .connect_with_connector(service_fn(move |_: Uri| {
-            let socket = socket.clone();
-            async move {
-                let stream = tokio::net::UnixStream::connect(socket).await?;
-                Ok::<_, std::io::Error>(TokioIo::new(stream))
-            }
-        }))
-        .await
-        .context("failed to connect to daemon socket")?;
-
-    Ok(channel)
 }
