@@ -1,3 +1,4 @@
+mod dump;
 mod status;
 
 use clap::{Parser, Subcommand};
@@ -23,6 +24,8 @@ struct Cli {
 enum Command {
     /// Show daemon status
     Status,
+    /// Dump all resources in the store
+    Dump,
 }
 
 #[tokio::main]
@@ -31,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Status => status::run(&cli.socket).await?,
+        Command::Dump => dump::run(&cli.socket).await?,
     }
 
     Ok(())

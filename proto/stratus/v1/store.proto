@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package stratus.v1;
+
+message DumpStoreRequest {}
+
+message DumpStoreResponse {
+  repeated string resources = 1;
+  uint64 revision = 2;
+}

@@ -14,10 +14,13 @@ tonic = { workspace = true }
 prost = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
+serde_json = { workspace = true }
+stratus-resources = { path = "../stratus-resources" }
 tower = { workspace = true }
 hyper-util = { workspace = true }
 
 [dev-dependencies]
+stratus-store = { path = "../stratus-store" }
 stratusd = { path = "../stratusd" }
 tempfile = "3"
 tokio-stream = { workspace = true }

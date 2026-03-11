@@ -1,6 +1,8 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use hyper_util::rt::TokioIo;
+use stratus_store::WatchableStore;
 use stratusd::proto::GetStatusRequest;
 use stratusd::proto::stratus_service_client::StratusServiceClient;
 use stratusd::proto::stratus_service_server::StratusServiceServer;
@@ -10,15 +12,24 @@ use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::{Channel, Endpoint, Server, Uri};
 use tower::service_fn;
 
+/// Create a WatchableStore backed by a tempdir.
+fn temp_store(dir: &std::path::Path) -> Arc<WatchableStore> {
+    let db_path = dir.join("test.db");
+    Arc::new(WatchableStore::open(&db_path).expect("failed to open store"))
+}
+
 /// Start a stratusd gRPC server on a temp socket.
-fn start_server(socket_path: &std::path::Path) -> tokio::sync::oneshot::Sender<()> {
+fn start_server(
+    socket_path: &std::path::Path,
+    store: Arc<WatchableStore>,
+) -> tokio::sync::oneshot::Sender<()> {
     let listener = UnixListener::bind(socket_path).expect("failed to bind socket");
     let stream = UnixListenerStream::new(listener);
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
     tokio::spawn(async move {
         Server::builder()
-            .add_service(StratusServiceServer::new(StratusServer::new()))
+            .add_service(StratusServiceServer::new(StratusServer::new(store)))
             .serve_with_incoming_shutdown(stream, async {
                 rx.await.ok();
             })
@@ -49,8 +60,9 @@ async fn connect(socket_path: std::path::PathBuf) -> StratusServiceClient<Channe
 async fn cli_connects_and_gets_status() {
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("test.sock");
+    let store = temp_store(dir.path());
 
-    let _shutdown = start_server(&sock);
+    let _shutdown = start_server(&sock, store);
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let mut client = connect(sock).await;
@@ -90,8 +102,9 @@ async fn cli_error_when_daemon_not_running() {
 async fn cli_error_when_daemon_shuts_down_mid_session() {
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("test.sock");
+    let store = temp_store(dir.path());
 
-    let shutdown = start_server(&sock);
+    let shutdown = start_server(&sock, store);
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let mut client = connect(sock).await;
@@ -113,8 +126,9 @@ async fn cli_error_when_daemon_shuts_down_mid_session() {
 async fn cli_gets_correct_version() {
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("test.sock");
+    let store = temp_store(dir.path());
 
-    let _shutdown = start_server(&sock);
+    let _shutdown = start_server(&sock, store);
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let mut client = connect(sock).await;

@@ -3,7 +3,9 @@ syntax = "proto3";
 package stratus.v1;
 
 import "stratus/v1/status.proto";
+import "stratus/v1/store.proto";
 
 service StratusService {
   rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+  rpc DumpStore(DumpStoreRequest) returns (DumpStoreResponse);
 }

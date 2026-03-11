@@ -194,6 +194,25 @@ impl WatchableStore {
         self.store.list(kind)
     }
 
+    /// All known resource kind strings, in table order.
+    const ALL_KINDS: [&str; 6] = [
+        "Network",
+        "Subnet",
+        "Instance",
+        "SecurityGroup",
+        "Image",
+        "PortForward",
+    ];
+
+    /// List all resources across all kinds.
+    pub fn list_all(&self) -> Result<Vec<Resource>, StoreError> {
+        let mut all = Vec::new();
+        for kind in &Self::ALL_KINDS {
+            all.extend(self.store.list(kind)?);
+        }
+        Ok(all)
+    }
+
     /// Current revision number.
     pub fn revision(&self) -> u64 {
         self.revision.load(Ordering::SeqCst)
