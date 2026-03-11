@@ -1,22 +1,24 @@
+use std::sync::Arc;
+
+use stratus_store::WatchableStore;
 use tonic::{Request, Response, Status};
 
-use crate::proto::{GetStatusRequest, GetStatusResponse, stratus_service_server::StratusService};
+use crate::proto::{
+    DumpStoreRequest, DumpStoreResponse, GetStatusRequest, GetStatusResponse,
+    stratus_service_server::StratusService,
+};
 
 pub struct StratusServer {
     start_time: std::time::Instant,
-}
-
-impl Default for StratusServer {
-    fn default() -> Self {
-        Self {
-            start_time: std::time::Instant::now(),
-        }
-    }
+    store: Arc<WatchableStore>,
 }
 
 impl StratusServer {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(store: Arc<WatchableStore>) -> Self {
+        Self {
+            start_time: std::time::Instant::now(),
+            store,
+        }
     }
 }
 
@@ -32,5 +34,24 @@ impl StratusService for StratusServer {
             uptime: format!("{}s", uptime.as_secs()),
         };
         Ok(Response::new(response))
+    }
+
+    async fn dump_store(
+        &self,
+        _request: Request<DumpStoreRequest>,
+    ) -> Result<Response<DumpStoreResponse>, Status> {
+        let resources = self
+            .store
+            .list_all()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let mut json_resources = Vec::with_capacity(resources.len());
+        for r in &resources {
+            let json = serde_json::to_string(r).map_err(|e| Status::internal(e.to_string()))?;
+            json_resources.push(json);
+        }
+        Ok(Response::new(DumpStoreResponse {
+            resources: json_resources,
+            revision: self.store.revision(),
+        }))
     }
 }
