@@ -21,4 +21,6 @@ pub enum ImageError {
     QemuImg(String),
     #[error("image has backing file reference: {0}")]
     BackingFile(String),
+    #[error("checksum file error: {0}")]
+    ChecksumFile(String),
 }

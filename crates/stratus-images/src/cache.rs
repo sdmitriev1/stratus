@@ -8,7 +8,7 @@ use stratus_resources::ImageFormat;
 
 use crate::ImageError;
 use crate::download::download_file;
-use crate::verify::{parse_checksum, validate_image};
+use crate::verify::{ChecksumSpec, parse_checksum, resolve_checksum_url, validate_image};
 
 #[derive(Debug)]
 pub struct CachedImage {
@@ -60,20 +60,31 @@ impl ImageCache {
         checksum: &str,
         format: ImageFormat,
     ) -> Result<CachedImage, ImageError> {
-        let (_algo, hex) = parse_checksum(checksum)?;
+        let spec = parse_checksum(checksum)?;
+
+        let hex: String = match spec {
+            ChecksumSpec::Inline { hex } => hex.to_string(),
+            ChecksumSpec::Remote { url: checksum_url } => {
+                let image_filename = url.rsplit('/').next().ok_or_else(|| {
+                    ImageError::ChecksumFile("cannot extract filename from source URL".into())
+                })?;
+                resolve_checksum_url(&self.client, checksum_url, image_filename).await?
+            }
+        };
+        let resolved_checksum = format!("sha256:{hex}");
 
         // Fast path: already cached
-        if let Some(path) = self.lookup(hex) {
+        if let Some(path) = self.lookup(&hex) {
             return Ok(CachedImage {
                 path,
-                checksum: checksum.to_string(),
+                checksum: resolved_checksum,
             });
         }
 
         // Check if another download is in flight
         {
             let in_flight = self.in_flight.lock().await;
-            if let Some(rx) = in_flight.get(hex) {
+            if let Some(rx) = in_flight.get(&*hex) {
                 let mut rx = rx.clone();
                 drop(in_flight);
                 // Wait for the other download to complete
@@ -83,7 +94,7 @@ impl ImageCache {
                     Ok(path) => {
                         return Ok(CachedImage {
                             path: path.clone(),
-                            checksum: checksum.to_string(),
+                            checksum: resolved_checksum,
                         });
                     }
                     Err(e) => {
@@ -100,7 +111,7 @@ impl ImageCache {
         {
             let mut in_flight = self.in_flight.lock().await;
             // Double-check: another task may have started between our check and acquiring the lock
-            if let Some(existing_rx) = in_flight.get(hex) {
+            if let Some(existing_rx) = in_flight.get(&*hex) {
                 let mut rx = existing_rx.clone();
                 drop(in_flight);
                 let _ = rx.wait_for(|v| v.is_some()).await;
@@ -109,7 +120,7 @@ impl ImageCache {
                     Ok(path) => {
                         return Ok(CachedImage {
                             path: path.clone(),
-                            checksum: checksum.to_string(),
+                            checksum: resolved_checksum,
                         });
                     }
                     Err(e) => {
@@ -119,10 +130,10 @@ impl ImageCache {
                     }
                 }
             }
-            in_flight.insert(hex.to_string(), rx);
+            in_flight.insert(hex.clone(), rx);
         }
 
-        let result = self.do_download(url, hex, format).await;
+        let result = self.do_download(url, &hex, format).await;
 
         // Notify waiters and clean up
         match &result {
@@ -135,7 +146,7 @@ impl ImageCache {
         }
         {
             let mut in_flight = self.in_flight.lock().await;
-            in_flight.remove(hex);
+            in_flight.remove(&*hex);
         }
 
         result
@@ -218,7 +229,15 @@ impl ImageCache {
 
     /// Remove a cached image. Returns true if the file existed.
     pub fn evict(&self, checksum: &str) -> Result<bool, ImageError> {
-        let (_algo, hex) = parse_checksum(checksum)?;
+        let spec = parse_checksum(checksum)?;
+        let hex = match spec {
+            ChecksumSpec::Inline { hex } => hex,
+            ChecksumSpec::Remote { .. } => {
+                return Err(ImageError::ChecksumFile(
+                    "cannot evict by checksum URL, use resolved sha256:<hex> form".into(),
+                ));
+            }
+        };
         let path = self.cache_dir.join("sha256").join(hex);
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(true),

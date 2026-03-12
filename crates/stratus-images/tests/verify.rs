@@ -1,12 +1,13 @@
 use stratus_images::ImageError;
-use stratus_images::verify::{parse_checksum, qemu_img_info, validate_image};
+use stratus_images::verify::{
+    ChecksumSpec, parse_checksum, parse_checksum_line, qemu_img_info, validate_image,
+};
 use stratus_resources::ImageFormat;
 
 #[test]
 fn parse_checksum_valid() {
-    let (algo, hex) = parse_checksum("sha256:abc123").unwrap();
-    assert_eq!(algo, "sha256");
-    assert_eq!(hex, "abc123");
+    let spec = parse_checksum("sha256:abc123").unwrap();
+    assert_eq!(spec, ChecksumSpec::Inline { hex: "abc123" });
 }
 
 #[test]
@@ -19,6 +20,37 @@ fn parse_checksum_unsupported_algo() {
 fn parse_checksum_no_colon() {
     let err = parse_checksum("sha256abc").unwrap_err();
     assert!(matches!(err, ImageError::InvalidImage(_)));
+}
+
+#[test]
+fn parse_checksum_remote_url() {
+    let spec = parse_checksum("sha256:https://example.com/SHA256SUMS").unwrap();
+    assert_eq!(
+        spec,
+        ChecksumSpec::Remote {
+            url: "https://example.com/SHA256SUMS"
+        }
+    );
+}
+
+#[test]
+fn parse_checksum_line_binary_mode() {
+    let (hash, filename) = parse_checksum_line("abc123 *cirros-0.6.3-aarch64-disk.img").unwrap();
+    assert_eq!(hash, "abc123");
+    assert_eq!(filename, "cirros-0.6.3-aarch64-disk.img");
+}
+
+#[test]
+fn parse_checksum_line_text_mode() {
+    let (hash, filename) = parse_checksum_line("abc123  cirros-0.6.3-aarch64-disk.img").unwrap();
+    assert_eq!(hash, "abc123");
+    assert_eq!(filename, "cirros-0.6.3-aarch64-disk.img");
+}
+
+#[test]
+fn parse_checksum_line_empty() {
+    assert!(parse_checksum_line("").is_none());
+    assert!(parse_checksum_line("   ").is_none());
 }
 
 #[tokio::test]

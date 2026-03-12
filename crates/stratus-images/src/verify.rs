@@ -5,19 +5,87 @@ use stratus_resources::ImageFormat;
 
 use crate::ImageError;
 
-/// Parse a checksum string of the form "algorithm:hex".
+/// The result of parsing a checksum string.
+#[derive(Debug, PartialEq)]
+pub enum ChecksumSpec<'a> {
+    /// An inline hex digest, e.g. `sha256:abc123`.
+    Inline { hex: &'a str },
+    /// A URL pointing to a checksums file, e.g. `sha256:https://example.com/SHA256SUMS`.
+    Remote { url: &'a str },
+}
+
+/// Parse a checksum string of the form "algorithm:hex" or "algorithm:url".
 /// Only sha256 is supported.
-pub fn parse_checksum(s: &str) -> Result<(&str, &str), ImageError> {
-    let (algo, hex) = s
+pub fn parse_checksum(s: &str) -> Result<ChecksumSpec<'_>, ImageError> {
+    let (algo, rest) = s
         .split_once(':')
         .ok_or_else(|| ImageError::InvalidImage(format!("invalid checksum format: {s}")))?;
     if algo != "sha256" {
         return Err(ImageError::UnsupportedAlgorithm(algo.to_string()));
     }
-    if hex.is_empty() {
+    if rest.is_empty() {
         return Err(ImageError::InvalidImage("empty checksum hex".to_string()));
     }
-    Ok((algo, hex))
+    if rest.starts_with("http://") || rest.starts_with("https://") {
+        Ok(ChecksumSpec::Remote { url: rest })
+    } else {
+        Ok(ChecksumSpec::Inline { hex: rest })
+    }
+}
+
+/// Parse a single line from a GNU coreutils checksum file.
+/// Supports binary mode (`<hash> *<filename>`) and text mode (`<hash>  <filename>`).
+/// Returns `Some((hash, filename))` on success.
+pub fn parse_checksum_line(line: &str) -> Option<(&str, &str)> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    // Try binary mode: "<hash> *<filename>"
+    if let Some((hash, rest)) = line.split_once(" *")
+        && !hash.is_empty()
+        && !rest.is_empty()
+    {
+        return Some((hash, rest));
+    }
+    // Try text mode: "<hash>  <filename>" (two spaces)
+    if let Some((hash, rest)) = line.split_once("  ")
+        && !hash.is_empty()
+        && !rest.is_empty()
+    {
+        return Some((hash, rest));
+    }
+    None
+}
+
+/// Fetch a checksums file from `checksum_url` and look up the hash for `image_filename`.
+pub async fn resolve_checksum_url(
+    client: &reqwest::Client,
+    checksum_url: &str,
+    image_filename: &str,
+) -> Result<String, ImageError> {
+    let body = client
+        .get(checksum_url)
+        .send()
+        .await
+        .map_err(ImageError::Download)?
+        .error_for_status()
+        .map_err(ImageError::Download)?
+        .text()
+        .await
+        .map_err(ImageError::Download)?;
+
+    for line in body.lines() {
+        if let Some((hash, filename)) = parse_checksum_line(line)
+            && filename == image_filename
+        {
+            return Ok(hash.to_string());
+        }
+    }
+
+    Err(ImageError::ChecksumFile(format!(
+        "filename {image_filename:?} not found in checksum file at {checksum_url}"
+    )))
 }
 
 #[derive(Debug)]

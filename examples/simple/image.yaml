@@ -2,5 +2,5 @@
 kind: Image
 name: cirros-0.6.3
 source_url: https://download.cirros-cloud.net/0.6.3/cirros-0.6.3-aarch64-disk.img
-checksum: sha256:611879b8299363fe60ff0f84982e4da08e63f476e8481170223db982959783cb
+checksum: sha256:https://download.cirros-cloud.net/0.6.3/SHA256SUMS
 format: qcow2
