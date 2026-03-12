@@ -4,10 +4,10 @@ use std::time::Duration;
 use hyper_util::rt::TokioIo;
 use stratus_images::ImageCache;
 use stratus_store::WatchableStore;
-use stratusd::proto::GetStatusRequest;
 use stratusd::proto::stratus_service_client::StratusServiceClient;
 use stratusd::proto::stratus_service_server::StratusServiceServer;
 use stratusd::server::StratusServer;
+use stratusd::{proto::GetStatusRequest, server::format_uptime};
 use tokio::net::UnixListener;
 use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::{Channel, Endpoint, Server, Uri};
@@ -145,4 +145,12 @@ async fn cli_gets_correct_version() {
         .into_inner();
 
     assert_eq!(resp.version, "0.1.0");
+}
+
+#[test]
+fn test_format_uptime() {
+    assert_eq!(format_uptime(Duration::from_secs(45)), "45s");
+    assert_eq!(format_uptime(Duration::from_secs(282)), "4m 42s");
+    assert_eq!(format_uptime(Duration::from_secs(3661)), "1h 1m 1s");
+    assert_eq!(format_uptime(Duration::from_secs(90061)), "1d 1h 1m 1s");
 }
