@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use stratus_images::ImageCache;
 use stratus_resources::{Resource, allocate_addresses, validate};
 use stratus_store::WatchableStore;
 use tonic::{Request, Response, Status};
+use tracing::warn;
 
 use crate::proto::{
     ApplyRequest, ApplyResponse, ApplyResult, DeleteRequest, DeleteResponse, DumpStoreRequest,
@@ -13,15 +15,50 @@ use crate::proto::{
 pub struct StratusServer {
     start_time: std::time::Instant,
     store: Arc<WatchableStore>,
+    image_cache: Arc<ImageCache>,
 }
 
 impl StratusServer {
-    pub fn new(store: Arc<WatchableStore>) -> Self {
+    pub fn new(store: Arc<WatchableStore>, image_cache: Arc<ImageCache>) -> Self {
         Self {
             start_time: std::time::Instant::now(),
             store,
+            image_cache,
         }
     }
+}
+
+/// Returns resources that depend on the given (kind, name) pair.
+fn find_dependents(resources: &[Resource], kind: &str, name: &str) -> Vec<(String, String)> {
+    let mut deps = Vec::new();
+    for r in resources {
+        let is_dep = match r {
+            Resource::Instance(inst) => match kind {
+                "Image" => inst.image == name,
+                "Subnet" => inst.interfaces.iter().any(|i| i.subnet == name),
+                "SecurityGroup" => inst
+                    .interfaces
+                    .iter()
+                    .any(|i| i.security_groups.iter().any(|sg| sg == name)),
+                _ => false,
+            },
+            Resource::Subnet(sub) => kind == "Network" && sub.network == name,
+            Resource::SecurityGroup(sg) => {
+                kind == "SecurityGroup"
+                    && sg.name != name
+                    && sg
+                        .rules
+                        .iter()
+                        .any(|r| r.remote_sg.as_deref() == Some(name))
+            }
+            Resource::PortForward(pf) => kind == "Instance" && pf.instance == name,
+            _ => false,
+        };
+        if is_dep {
+            deps.push((r.kind_str().to_string(), r.name().to_string()));
+        }
+    }
+    deps
 }
 
 /// Returns a sort priority for resource kinds so dependencies are stored first.
@@ -153,10 +190,24 @@ impl StratusService for StratusServer {
         // 4. Validate merged set
         validate(&merged).map_err(|e| Status::invalid_argument(e.to_string()))?;
 
-        // 5. Sort incoming by dependency priority
+        // 5. Download images with checksums
+        for r in &incoming {
+            if let Resource::Image(img) = r {
+                if let Some(ref checksum) = img.checksum {
+                    self.image_cache
+                        .ensure(&img.source_url, checksum, img.format)
+                        .await
+                        .map_err(|e| Status::internal(format!("image download failed: {e}")))?;
+                } else {
+                    warn!(name = img.name, "image has no checksum, skipping download");
+                }
+            }
+        }
+
+        // 6. Sort incoming by dependency priority
         incoming.sort_by_key(|r| kind_priority(r.kind_str()));
 
-        // 6. Run allocate_addresses on merged set, then extract incoming instances
+        // 7. Run allocate_addresses on merged set, then extract incoming instances
         //    with their allocations. Already-stored instances keep existing allocations.
         allocate_addresses(&mut merged)
             .map_err(|e| Status::internal(format!("IP allocation failed: {e}")))?;
@@ -171,7 +222,7 @@ impl StratusService for StratusServer {
             .map(|r| (r.name().to_string(), r))
             .collect();
 
-        // 7. Store each incoming resource (skip if unchanged)
+        // 8. Store each incoming resource (skip if unchanged)
         let mut results = Vec::with_capacity(incoming.len());
         for r in &incoming {
             // Use the allocated version for instances
@@ -267,6 +318,22 @@ impl StratusService for StratusServer {
     ) -> Result<Response<DeleteResponse>, Status> {
         let req = request.into_inner();
 
+        // Check referential integrity before deleting
+        let all = self
+            .store
+            .list_all()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let deps = find_dependents(&all, &req.kind, &req.name);
+        if !deps.is_empty() {
+            let names: Vec<String> = deps.iter().map(|(k, n)| format!("{k}/{n}")).collect();
+            return Err(Status::failed_precondition(format!(
+                "cannot delete {}/{}: referenced by {}",
+                req.kind,
+                req.name,
+                names.join(", ")
+            )));
+        }
+
         let (revision, old) = self
             .store
             .delete(&req.kind, &req.name)
@@ -276,6 +343,13 @@ impl StratusService for StratusServer {
                 }
                 other => Status::internal(other.to_string()),
             })?;
+
+        if let Some(Resource::Image(ref img)) = old
+            && let Some(ref checksum) = img.checksum
+            && let Err(e) = self.image_cache.evict(checksum)
+        {
+            warn!(name = img.name, error = %e, "failed to evict cached image");
+        }
 
         Ok(Response::new(DeleteResponse {
             found: old.is_some(),

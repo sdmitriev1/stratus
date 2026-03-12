@@ -348,7 +348,10 @@ fn validate_image(img: &Image, errors: &mut Vec<ValidationError>) {
                     name: img.name.clone(),
                     message: "checksum must be in format 'algorithm:hex'".into(),
                 });
-            } else if !parts[1].chars().all(|c| c.is_ascii_hexdigit()) {
+            } else if !parts[1].starts_with("http://")
+                && !parts[1].starts_with("https://")
+                && !parts[1].chars().all(|c| c.is_ascii_hexdigit())
+            {
                 errors.push(ValidationError::InvalidField {
                     kind: "Image".into(),
                     name: img.name.clone(),
