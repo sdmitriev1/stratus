@@ -28,7 +28,7 @@ pub async fn run(socket: &str, kind: &str, name: Option<&str>, output: OutputFor
         .collect::<Result<_, _>>()
         .context("failed to deserialize resources")?;
 
-    print_resources(&resources, output)?;
+    print_resources(&resources, output, &resp.instance_statuses)?;
 
     Ok(())
 }

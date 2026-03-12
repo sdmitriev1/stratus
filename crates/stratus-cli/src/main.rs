@@ -3,6 +3,7 @@ mod connect;
 mod delete;
 mod dump;
 mod get;
+mod instance;
 mod output;
 mod status;
 
@@ -58,6 +59,30 @@ enum Command {
         #[arg(short, long)]
         file: Option<String>,
     },
+    /// Manage instances
+    Instance {
+        #[command(subcommand)]
+        action: InstanceCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum InstanceCommand {
+    /// Start an instance
+    Start {
+        /// Instance name
+        name: String,
+    },
+    /// Stop an instance gracefully
+    Stop {
+        /// Instance name
+        name: String,
+    },
+    /// Kill an instance immediately
+    Kill {
+        /// Instance name
+        name: String,
+    },
 }
 
 #[tokio::main]
@@ -77,6 +102,11 @@ async fn main() -> anyhow::Result<()> {
                 delete::run_by_name(&cli.socket, &kind, &name).await?
             }
             _ => bail!("usage: stratus delete <kind> <name> or stratus delete -f <file>"),
+        },
+        Command::Instance { action } => match action {
+            InstanceCommand::Start { name } => instance::start(&cli.socket, &name).await?,
+            InstanceCommand::Stop { name } => instance::stop(&cli.socket, &name).await?,
+            InstanceCommand::Kill { name } => instance::kill(&cli.socket, &name).await?,
         },
     }
 

@@ -9,8 +9,9 @@ use tracing::warn;
 use crate::proto::{
     ApplyRequest, ApplyResponse, ApplyResult, DeleteRequest, DeleteResponse, DumpStoreRequest,
     DumpStoreResponse, GetRequest, GetResponse, GetStatusRequest, GetStatusResponse,
-    stratus_service_server::StratusService,
+    InstanceActionRequest, InstanceActionResponse, stratus_service_server::StratusService,
 };
+use crate::vm_manager::VmManager;
 
 pub fn format_uptime(uptime: Duration) -> String {
     let seconds = uptime.as_secs();
@@ -33,14 +34,20 @@ pub struct StratusServer {
     start_time: std::time::Instant,
     store: Arc<WatchableStore>,
     image_cache: Arc<ImageCache>,
+    vm_manager: Arc<VmManager>,
 }
 
 impl StratusServer {
-    pub fn new(store: Arc<WatchableStore>, image_cache: Arc<ImageCache>) -> Self {
+    pub fn new(
+        store: Arc<WatchableStore>,
+        image_cache: Arc<ImageCache>,
+        vm_manager: Arc<VmManager>,
+    ) -> Self {
         Self {
             start_time: std::time::Instant::now(),
             store,
             image_cache,
+            vm_manager,
         }
     }
 }
@@ -280,6 +287,50 @@ impl StratusService for StratusServer {
                 },
                 revision,
             });
+
+            // After storing an Instance, start its VM
+            if let Resource::Instance(inst) = to_store {
+                // Look up the Image resource from the store
+                if let Ok(Some(Resource::Image(image))) = self.store.get("Image", &inst.image) {
+                    if let Some(ref checksum) = image.checksum {
+                        if let Some(base_path) = self
+                            .image_cache
+                            .lookup(checksum.strip_prefix("sha256:").unwrap_or(checksum))
+                        {
+                            match self
+                                .vm_manager
+                                .start_instance(&inst.name, inst, &image, &base_path)
+                                .await
+                            {
+                                Ok(status) => {
+                                    tracing::info!(
+                                        name = inst.name,
+                                        status = %status,
+                                        "VM started"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        name = inst.name,
+                                        error = %e,
+                                        "failed to start VM"
+                                    );
+                                }
+                            }
+                        } else {
+                            tracing::warn!(
+                                name = inst.name,
+                                "base image not cached, skipping VM start"
+                            );
+                        }
+                    } else {
+                        tracing::warn!(
+                            name = inst.name,
+                            "image has no checksum, skipping VM start"
+                        );
+                    }
+                }
+            }
         }
 
         Ok(Response::new(ApplyResponse { results }))
@@ -323,9 +374,19 @@ impl StratusService for StratusServer {
             json_resources.push(json);
         }
 
+        // Populate instance statuses
+        let mut instance_statuses = std::collections::HashMap::new();
+        if req.kind == "Instance" {
+            let statuses = self.vm_manager.statuses().await;
+            for (name, status) in statuses {
+                instance_statuses.insert(name, status.to_string());
+            }
+        }
+
         Ok(Response::new(GetResponse {
             resources: json_resources,
             revision: self.store.revision(),
+            instance_statuses,
         }))
     }
 
@@ -351,6 +412,13 @@ impl StratusService for StratusServer {
             )));
         }
 
+        // Destroy VM if deleting an instance
+        if req.kind == "Instance"
+            && let Err(e) = self.vm_manager.destroy_instance(&req.name).await
+        {
+            warn!(name = req.name, error = %e, "failed to destroy VM");
+        }
+
         let (revision, old) = self
             .store
             .delete(&req.kind, &req.name)
@@ -372,5 +440,95 @@ impl StratusService for StratusServer {
             found: old.is_some(),
             revision,
         }))
+    }
+
+    async fn instance_start(
+        &self,
+        request: Request<InstanceActionRequest>,
+    ) -> Result<Response<InstanceActionResponse>, Status> {
+        let req = request.into_inner();
+
+        // Load instance from store
+        let instance = match self.store.get("Instance", &req.name) {
+            Ok(Some(Resource::Instance(inst))) => inst,
+            Ok(_) => {
+                return Err(Status::not_found(format!(
+                    "instance not found: {}",
+                    req.name
+                )));
+            }
+            Err(e) => return Err(Status::internal(e.to_string())),
+        };
+
+        // Look up image
+        let image = match self.store.get("Image", &instance.image) {
+            Ok(Some(Resource::Image(img))) => img,
+            Ok(_) => {
+                return Err(Status::not_found(format!(
+                    "image not found: {}",
+                    instance.image
+                )));
+            }
+            Err(e) => return Err(Status::internal(e.to_string())),
+        };
+
+        // Get base image path
+        let base_path = image
+            .checksum
+            .as_ref()
+            .and_then(|cs| {
+                self.image_cache
+                    .lookup(cs.strip_prefix("sha256:").unwrap_or(cs))
+            })
+            .ok_or_else(|| Status::failed_precondition("base image not cached"))?;
+
+        match self
+            .vm_manager
+            .start_instance(&req.name, &instance, &image, &base_path)
+            .await
+        {
+            Ok(status) => Ok(Response::new(InstanceActionResponse {
+                name: req.name,
+                status: status.to_string(),
+                message: "started".into(),
+            })),
+            Err(e) => Err(Status::internal(format!("failed to start VM: {e}"))),
+        }
+    }
+
+    async fn instance_stop(
+        &self,
+        request: Request<InstanceActionRequest>,
+    ) -> Result<Response<InstanceActionResponse>, Status> {
+        let req = request.into_inner();
+
+        match self
+            .vm_manager
+            .stop_instance(&req.name, Duration::from_secs(30))
+            .await
+        {
+            Ok(status) => Ok(Response::new(InstanceActionResponse {
+                name: req.name,
+                status: status.to_string(),
+                message: "stopped".into(),
+            })),
+            Err(e) => Err(Status::internal(format!("failed to stop VM: {e}"))),
+        }
+    }
+
+    async fn instance_kill(
+        &self,
+        request: Request<InstanceActionRequest>,
+    ) -> Result<Response<InstanceActionResponse>, Status> {
+        let req = request.into_inner();
+
+        match self.vm_manager.kill_instance(&req.name).await {
+            Ok(status) => Ok(Response::new(InstanceActionResponse {
+                name: req.name,
+                status: status.to_string(),
+                message: "killed".into(),
+            })),
+            Err(e) => Err(Status::internal(format!("failed to kill VM: {e}"))),
+        }
     }
 }

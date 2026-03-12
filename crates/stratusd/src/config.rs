@@ -13,6 +13,22 @@ impl Config {
     pub fn images_dir(&self) -> PathBuf {
         self.data_dir.join("images")
     }
+
+    pub fn instances_dir(&self) -> PathBuf {
+        self.data_dir.join("instances")
+    }
+
+    pub fn runtime_dir(&self) -> PathBuf {
+        PathBuf::from("/run/stratus")
+    }
+
+    pub fn instance_runtime_dir(&self, name: &str) -> PathBuf {
+        self.runtime_dir().join(name)
+    }
+
+    pub fn instance_data_dir(&self, name: &str) -> PathBuf {
+        self.instances_dir().join(name)
+    }
 }
 
 impl Default for Config {

@@ -23,6 +23,7 @@ hyper-util = { workspace = true }
 [dev-dependencies]
 stratus-store = { path = "../stratus-store" }
 stratus-images = { path = "../stratus-images" }
+stratus-vm = { path = "../stratus-vm" }
 stratusd = { path = "../stratusd" }
 tempfile = "3"
 tokio-stream = { workspace = true }

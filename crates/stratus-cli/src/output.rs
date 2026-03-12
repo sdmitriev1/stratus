@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
 use stratus_resources::{Resource, serialize_yaml_documents};
 
@@ -22,10 +24,14 @@ pub fn normalize_kind(s: &str) -> Result<String> {
     Ok(canonical.to_string())
 }
 
-pub fn print_resources(resources: &[Resource], format: OutputFormat) -> Result<()> {
+pub fn print_resources(
+    resources: &[Resource],
+    format: OutputFormat,
+    instance_statuses: &HashMap<String, String>,
+) -> Result<()> {
     match format {
         OutputFormat::Table => {
-            print_table(resources);
+            print_table(resources, instance_statuses);
             Ok(())
         }
         OutputFormat::Yaml => {
@@ -41,16 +47,41 @@ pub fn print_resources(resources: &[Resource], format: OutputFormat) -> Result<(
     }
 }
 
-fn print_table(resources: &[Resource]) {
+fn print_table(resources: &[Resource], instance_statuses: &HashMap<String, String>) {
     if resources.is_empty() {
         println!("No resources found.");
         return;
     }
 
-    println!("{:<20} {:<30} DETAILS", "KIND", "NAME");
+    let has_statuses = !instance_statuses.is_empty();
+
+    if has_statuses {
+        println!("{:<20} {:<30} {:<12} DETAILS", "KIND", "NAME", "STATUS");
+    } else {
+        println!("{:<20} {:<30} DETAILS", "KIND", "NAME");
+    }
+
     for r in resources {
         let details = resource_details(r);
-        println!("{:<20} {:<30} {}", r.kind_str(), r.name(), details);
+        if has_statuses {
+            let status = if let Resource::Instance(inst) = r {
+                instance_statuses
+                    .get(&inst.name)
+                    .map(|s| s.as_str())
+                    .unwrap_or("-")
+            } else {
+                ""
+            };
+            println!(
+                "{:<20} {:<30} {:<12} {}",
+                r.kind_str(),
+                r.name(),
+                status,
+                details
+            );
+        } else {
+            println!("{:<20} {:<30} {}", r.kind_str(), r.name(), details);
+        }
     }
 }
 

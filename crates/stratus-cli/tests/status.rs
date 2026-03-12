@@ -7,6 +7,7 @@ use stratus_store::WatchableStore;
 use stratusd::proto::stratus_service_client::StratusServiceClient;
 use stratusd::proto::stratus_service_server::StratusServiceServer;
 use stratusd::server::StratusServer;
+use stratusd::vm_manager::VmManager;
 use stratusd::{proto::GetStatusRequest, server::format_uptime};
 use tokio::net::UnixListener;
 use tokio_stream::wrappers::UnixListenerStream;
@@ -26,6 +27,7 @@ fn start_server(
 ) -> tokio::sync::oneshot::Sender<()> {
     let images_dir = socket_path.parent().unwrap().join("images");
     let image_cache = Arc::new(ImageCache::new(images_dir).expect("failed to create image cache"));
+    let vm_manager = VmManager::stub(socket_path.parent().unwrap().to_path_buf());
     let listener = UnixListener::bind(socket_path).expect("failed to bind socket");
     let stream = UnixListenerStream::new(listener);
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
@@ -35,6 +37,7 @@ fn start_server(
             .add_service(StratusServiceServer::new(StratusServer::new(
                 store,
                 image_cache,
+                vm_manager,
             )))
             .serve_with_incoming_shutdown(stream, async {
                 rx.await.ok();
