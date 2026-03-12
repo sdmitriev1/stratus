@@ -1151,6 +1151,181 @@ async fn apply_then_delete_then_reapply() {
     assert_eq!(get_resp3.resources.len(), 1);
 }
 
+// ========== Referential integrity tests ==========
+
+#[tokio::test]
+async fn delete_image_blocked_by_instance() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("test.sock");
+    let store = temp_store(dir.path());
+
+    let _shutdown = start_server(&sock, store);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = connect(sock).await;
+
+    // Apply image + network + subnet + instance referencing the image
+    let resources = vec![
+        to_json(&Resource::Network(stratus_resources::Network {
+            name: "net1".to_string(),
+        })),
+        to_json(&Resource::Subnet(stratus_resources::Subnet {
+            name: "sub1".to_string(),
+            network: "net1".to_string(),
+            cidr: "10.0.0.0/24".parse().unwrap(),
+            gateway: "10.0.0.1".parse().unwrap(),
+            dns: vec![],
+            dhcp: true,
+            nat: stratus_resources::NatMode::None,
+            isolated: false,
+        })),
+        to_json(&Resource::Image(stratus_resources::Image {
+            name: "img1".to_string(),
+            source_url: "https://example.com/image.qcow2".to_string(),
+            format: stratus_resources::ImageFormat::Qcow2,
+            architecture: None,
+            os_type: None,
+            checksum: None,
+            min_disk_gb: None,
+            min_ram_mb: None,
+        })),
+        to_json(&Resource::Instance(stratus_resources::Instance {
+            name: "vm1".to_string(),
+            cpus: 1,
+            memory_mb: 512,
+            disk_gb: 10,
+            image: "img1".to_string(),
+            secure_boot: false,
+            vtpm: false,
+            interfaces: vec![stratus_resources::Interface {
+                subnet: "sub1".to_string(),
+                ip: None,
+                mac: None,
+                security_groups: vec![],
+            }],
+            user_data: None,
+            ssh_authorized_keys: vec![],
+        })),
+    ];
+
+    client.apply(ApplyRequest { resources }).await.unwrap();
+
+    // Try to delete the image — should fail
+    let resp = client
+        .delete(DeleteRequest {
+            kind: "Image".to_string(),
+            name: "img1".to_string(),
+        })
+        .await;
+
+    assert!(resp.is_err());
+    let status = resp.unwrap_err();
+    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    assert!(status.message().contains("Instance/vm1"));
+
+    // Image should still exist
+    let get_resp = client
+        .get(GetRequest {
+            kind: "Image".to_string(),
+            name: Some("img1".to_string()),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(get_resp.resources.len(), 1);
+}
+
+#[tokio::test]
+async fn delete_image_succeeds_after_instance_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("test.sock");
+    let store = temp_store(dir.path());
+
+    let _shutdown = start_server(&sock, store);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = connect(sock).await;
+
+    // Apply image + network + subnet + instance referencing the image
+    let resources = vec![
+        to_json(&Resource::Network(stratus_resources::Network {
+            name: "net1".to_string(),
+        })),
+        to_json(&Resource::Subnet(stratus_resources::Subnet {
+            name: "sub1".to_string(),
+            network: "net1".to_string(),
+            cidr: "10.0.0.0/24".parse().unwrap(),
+            gateway: "10.0.0.1".parse().unwrap(),
+            dns: vec![],
+            dhcp: true,
+            nat: stratus_resources::NatMode::None,
+            isolated: false,
+        })),
+        to_json(&Resource::Image(stratus_resources::Image {
+            name: "img1".to_string(),
+            source_url: "https://example.com/image.qcow2".to_string(),
+            format: stratus_resources::ImageFormat::Qcow2,
+            architecture: None,
+            os_type: None,
+            checksum: None,
+            min_disk_gb: None,
+            min_ram_mb: None,
+        })),
+        to_json(&Resource::Instance(stratus_resources::Instance {
+            name: "vm1".to_string(),
+            cpus: 1,
+            memory_mb: 512,
+            disk_gb: 10,
+            image: "img1".to_string(),
+            secure_boot: false,
+            vtpm: false,
+            interfaces: vec![stratus_resources::Interface {
+                subnet: "sub1".to_string(),
+                ip: None,
+                mac: None,
+                security_groups: vec![],
+            }],
+            user_data: None,
+            ssh_authorized_keys: vec![],
+        })),
+    ];
+
+    client.apply(ApplyRequest { resources }).await.unwrap();
+
+    // Delete instance first
+    let del_inst = client
+        .delete(DeleteRequest {
+            kind: "Instance".to_string(),
+            name: "vm1".to_string(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(del_inst.found);
+
+    // Now delete image — should succeed
+    let del_img = client
+        .delete(DeleteRequest {
+            kind: "Image".to_string(),
+            name: "img1".to_string(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(del_img.found);
+
+    // Verify image is gone
+    let get_resp = client
+        .get(GetRequest {
+            kind: "Image".to_string(),
+            name: Some("img1".to_string()),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(get_resp.resources.is_empty());
+}
+
 // ========== Image download tests ==========
 
 #[tokio::test]

@@ -28,6 +28,39 @@ impl StratusServer {
     }
 }
 
+/// Returns resources that depend on the given (kind, name) pair.
+fn find_dependents(resources: &[Resource], kind: &str, name: &str) -> Vec<(String, String)> {
+    let mut deps = Vec::new();
+    for r in resources {
+        let is_dep = match r {
+            Resource::Instance(inst) => match kind {
+                "Image" => inst.image == name,
+                "Subnet" => inst.interfaces.iter().any(|i| i.subnet == name),
+                "SecurityGroup" => inst
+                    .interfaces
+                    .iter()
+                    .any(|i| i.security_groups.iter().any(|sg| sg == name)),
+                _ => false,
+            },
+            Resource::Subnet(sub) => kind == "Network" && sub.network == name,
+            Resource::SecurityGroup(sg) => {
+                kind == "SecurityGroup"
+                    && sg.name != name
+                    && sg
+                        .rules
+                        .iter()
+                        .any(|r| r.remote_sg.as_deref() == Some(name))
+            }
+            Resource::PortForward(pf) => kind == "Instance" && pf.instance == name,
+            _ => false,
+        };
+        if is_dep {
+            deps.push((r.kind_str().to_string(), r.name().to_string()));
+        }
+    }
+    deps
+}
+
 /// Returns a sort priority for resource kinds so dependencies are stored first.
 fn kind_priority(kind: &str) -> u8 {
     match kind {
@@ -284,6 +317,22 @@ impl StratusService for StratusServer {
         request: Request<DeleteRequest>,
     ) -> Result<Response<DeleteResponse>, Status> {
         let req = request.into_inner();
+
+        // Check referential integrity before deleting
+        let all = self
+            .store
+            .list_all()
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let deps = find_dependents(&all, &req.kind, &req.name);
+        if !deps.is_empty() {
+            let names: Vec<String> = deps.iter().map(|(k, n)| format!("{k}/{n}")).collect();
+            return Err(Status::failed_precondition(format!(
+                "cannot delete {}/{}: referenced by {}",
+                req.kind,
+                req.name,
+                names.join(", ")
+            )));
+        }
 
         let (revision, old) = self
             .store
