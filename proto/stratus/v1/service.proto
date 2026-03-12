@@ -12,4 +12,7 @@ service StratusService {
   rpc Apply(ApplyRequest) returns (ApplyResponse);
   rpc Get(GetRequest) returns (GetResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc InstanceStart(InstanceActionRequest) returns (InstanceActionResponse);
+  rpc InstanceStop(InstanceActionRequest) returns (InstanceActionResponse);
+  rpc InstanceKill(InstanceActionRequest) returns (InstanceActionResponse);
 }

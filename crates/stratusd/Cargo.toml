@@ -16,6 +16,7 @@ serde_json = { workspace = true }
 stratus-store = { path = "../stratus-store" }
 stratus-resources = { path = "../stratus-resources" }
 stratus-images = { path = "../stratus-images" }
+stratus-vm = { path = "../stratus-vm" }
 
 [dev-dependencies]
 serde_json = { workspace = true }
@@ -25,6 +26,7 @@ tower = { workspace = true }
 axum = "0.8"
 sha2 = { workspace = true }
 stratus-images = { path = "../stratus-images" }
+stratus-vm = { path = "../stratus-vm" }
 
 [build-dependencies]
 tonic-build = { workspace = true }

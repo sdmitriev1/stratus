@@ -11,6 +11,7 @@ use stratusd::proto::{
     ApplyRequest, DeleteRequest, DumpStoreRequest, GetRequest, GetStatusRequest,
 };
 use stratusd::server::StratusServer;
+use stratusd::vm_manager::VmManager;
 use tokio::net::UnixListener;
 use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::{Channel, Endpoint, Server, Uri};
@@ -32,6 +33,7 @@ fn start_server_with_cache(
     store: Arc<WatchableStore>,
     image_cache: Arc<ImageCache>,
 ) -> tokio::sync::oneshot::Sender<()> {
+    let vm_manager = VmManager::stub(socket_path.parent().unwrap().to_path_buf());
     let listener = UnixListener::bind(socket_path).expect("failed to bind socket");
     let stream = UnixListenerStream::new(listener);
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
@@ -41,6 +43,7 @@ fn start_server_with_cache(
             .add_service(StratusServiceServer::new(StratusServer::new(
                 store,
                 image_cache,
+                vm_manager,
             )))
             .serve_with_incoming_shutdown(stream, async {
                 rx.await.ok();

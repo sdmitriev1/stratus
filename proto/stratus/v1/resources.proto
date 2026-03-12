@@ -24,6 +24,7 @@ message GetRequest {
 message GetResponse {
   repeated string resources = 1;  // JSON-encoded Resource objects
   uint64 revision = 2;
+  map<string, string> instance_statuses = 3;
 }
 
 message DeleteRequest {
@@ -34,4 +35,14 @@ message DeleteRequest {
 message DeleteResponse {
   bool found = 1;
   uint64 revision = 2;
+}
+
+message InstanceActionRequest {
+  string name = 1;
+}
+
+message InstanceActionResponse {
+  string name = 1;
+  string status = 2;
+  string message = 3;
 }
