@@ -1,5 +1,6 @@
 ---
 kind: Image
-name: ubuntu-2404
-source_url: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+name: cirros-0.6.3
+source_url: https://download.cirros-cloud.net/0.6.3/cirros-0.6.3-aarch64-disk.img
+checksum: sha256:611879b8299363fe60ff0f84982e4da08e63f476e8481170223db982959783cb
 format: qcow2

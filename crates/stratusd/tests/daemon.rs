@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hyper_util::rt::TokioIo;
+use stratus_images::ImageCache;
 use stratus_resources::Resource;
 use stratus_store::WatchableStore;
 use stratusd::proto::stratus_service_client::StratusServiceClient;
@@ -21,13 +22,26 @@ fn start_server(
     socket_path: &std::path::Path,
     store: Arc<WatchableStore>,
 ) -> tokio::sync::oneshot::Sender<()> {
+    let images_dir = socket_path.parent().unwrap().join("images");
+    let image_cache = Arc::new(ImageCache::new(images_dir).expect("failed to create image cache"));
+    start_server_with_cache(socket_path, store, image_cache)
+}
+
+fn start_server_with_cache(
+    socket_path: &std::path::Path,
+    store: Arc<WatchableStore>,
+    image_cache: Arc<ImageCache>,
+) -> tokio::sync::oneshot::Sender<()> {
     let listener = UnixListener::bind(socket_path).expect("failed to bind socket");
     let stream = UnixListenerStream::new(listener);
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
     tokio::spawn(async move {
         Server::builder()
-            .add_service(StratusServiceServer::new(StratusServer::new(store)))
+            .add_service(StratusServiceServer::new(StratusServer::new(
+                store,
+                image_cache,
+            )))
             .serve_with_incoming_shutdown(stream, async {
                 rx.await.ok();
             })
@@ -1135,4 +1149,178 @@ async fn apply_then_delete_then_reapply() {
         .unwrap()
         .into_inner();
     assert_eq!(get_resp3.resources.len(), 1);
+}
+
+// ========== Image download tests ==========
+
+#[tokio::test]
+async fn apply_image_triggers_download() {
+    use sha2::{Digest, Sha256};
+
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("test.sock");
+    let store = temp_store(dir.path());
+
+    let images_dir = dir.path().join("images");
+    let image_cache =
+        Arc::new(ImageCache::new(images_dir.clone()).expect("failed to create image cache"));
+
+    // Start a test HTTP server serving known data
+    let data = b"fake qcow2 image data for testing";
+    let digest = Sha256::digest(data);
+    let hex_digest = digest
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let checksum = format!("sha256:{hex_digest}");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let url = format!("http://{addr}/image");
+
+    let served_data = data.to_vec();
+    let http_handle = tokio::spawn(async move {
+        use axum::{Router, routing::get};
+        let app = Router::new().route(
+            "/image",
+            get(move || {
+                let d = served_data.clone();
+                async move { d }
+            }),
+        );
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let _shutdown = start_server_with_cache(&sock, store, image_cache);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = connect(sock).await;
+
+    let img = Resource::Image(stratus_resources::Image {
+        name: "test-img".to_string(),
+        source_url: url,
+        format: stratus_resources::ImageFormat::Raw,
+        architecture: None,
+        os_type: None,
+        checksum: Some(checksum),
+        min_disk_gb: None,
+        min_ram_mb: None,
+    });
+
+    let resp = client
+        .apply(ApplyRequest {
+            resources: vec![to_json(&img)],
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(resp.results.len(), 1);
+    assert_eq!(resp.results[0].action, "created");
+
+    // Verify image is cached
+    let cached_path = images_dir.join("sha256").join(&hex_digest);
+    assert!(
+        cached_path.exists(),
+        "image should be cached at {cached_path:?}"
+    );
+    let cached_content = std::fs::read(&cached_path).unwrap();
+    assert_eq!(cached_content, data);
+
+    // No .partial files should remain
+    let downloading_dir = images_dir.join(".downloading");
+    let partials: Vec<_> = std::fs::read_dir(&downloading_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    assert!(partials.is_empty(), "no partial files should remain");
+
+    http_handle.abort();
+}
+
+#[tokio::test]
+async fn delete_image_evicts_cache() {
+    use sha2::{Digest, Sha256};
+
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("test.sock");
+    let store = temp_store(dir.path());
+
+    let images_dir = dir.path().join("images");
+    let image_cache =
+        Arc::new(ImageCache::new(images_dir.clone()).expect("failed to create image cache"));
+
+    // Start a test HTTP server serving known data
+    let data = b"fake image data for eviction test";
+    let digest = Sha256::digest(data);
+    let hex_digest = digest
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let checksum = format!("sha256:{hex_digest}");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let url = format!("http://{addr}/image");
+
+    let served_data = data.to_vec();
+    let http_handle = tokio::spawn(async move {
+        use axum::{Router, routing::get};
+        let app = Router::new().route(
+            "/image",
+            get(move || {
+                let d = served_data.clone();
+                async move { d }
+            }),
+        );
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let _shutdown = start_server_with_cache(&sock, store, image_cache);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = connect(sock).await;
+
+    let img = Resource::Image(stratus_resources::Image {
+        name: "evict-img".to_string(),
+        source_url: url,
+        format: stratus_resources::ImageFormat::Raw,
+        architecture: None,
+        os_type: None,
+        checksum: Some(checksum),
+        min_disk_gb: None,
+        min_ram_mb: None,
+    });
+
+    // Apply triggers download
+    client
+        .apply(ApplyRequest {
+            resources: vec![to_json(&img)],
+        })
+        .await
+        .unwrap();
+
+    // Verify cached file exists
+    let cached_path = images_dir.join("sha256").join(&hex_digest);
+    assert!(cached_path.exists(), "image should be cached after apply");
+
+    // Delete the image resource
+    let del_resp = client
+        .delete(DeleteRequest {
+            kind: "Image".to_string(),
+            name: "evict-img".to_string(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(del_resp.found);
+
+    // Cached file should be gone
+    assert!(
+        !cached_path.exists(),
+        "cached image file should be evicted after delete"
+    );
+
+    http_handle.abort();
 }

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use stratus_images::ImageCache;
 use stratus_store::WatchableStore;
 use tokio::net::UnixListener;
 use tokio_stream::wrappers::UnixListenerStream;
@@ -26,6 +27,10 @@ async fn main() -> Result<()> {
     let store = Arc::new(WatchableStore::open(config.db_path())?);
     info!(path = %config.db_path().display(), "store opened");
 
+    // Initialize image cache.
+    let image_cache = Arc::new(ImageCache::new(config.images_dir())?);
+    info!(path = %config.images_dir().display(), "image cache initialized");
+
     // Ensure socket parent directory exists.
     if let Some(parent) = config.socket_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -41,8 +46,9 @@ async fn main() -> Result<()> {
 
     info!(socket = %config.socket_path.display(), "stratusd listening");
 
-    let stratus_service =
-        proto::stratus_service_server::StratusServiceServer::new(StratusServer::new(store));
+    let stratus_service = proto::stratus_service_server::StratusServiceServer::new(
+        StratusServer::new(store, image_cache),
+    );
 
     Server::builder()
         .add_service(stratus_service)

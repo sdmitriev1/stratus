@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use stratus_images::ImageCache;
 use stratus_resources::{Resource, allocate_addresses, validate};
 use stratus_store::WatchableStore;
 use tonic::{Request, Response, Status};
+use tracing::warn;
 
 use crate::proto::{
     ApplyRequest, ApplyResponse, ApplyResult, DeleteRequest, DeleteResponse, DumpStoreRequest,
@@ -13,13 +15,15 @@ use crate::proto::{
 pub struct StratusServer {
     start_time: std::time::Instant,
     store: Arc<WatchableStore>,
+    image_cache: Arc<ImageCache>,
 }
 
 impl StratusServer {
-    pub fn new(store: Arc<WatchableStore>) -> Self {
+    pub fn new(store: Arc<WatchableStore>, image_cache: Arc<ImageCache>) -> Self {
         Self {
             start_time: std::time::Instant::now(),
             store,
+            image_cache,
         }
     }
 }
@@ -153,10 +157,24 @@ impl StratusService for StratusServer {
         // 4. Validate merged set
         validate(&merged).map_err(|e| Status::invalid_argument(e.to_string()))?;
 
-        // 5. Sort incoming by dependency priority
+        // 5. Download images with checksums
+        for r in &incoming {
+            if let Resource::Image(img) = r {
+                if let Some(ref checksum) = img.checksum {
+                    self.image_cache
+                        .ensure(&img.source_url, checksum, img.format)
+                        .await
+                        .map_err(|e| Status::internal(format!("image download failed: {e}")))?;
+                } else {
+                    warn!(name = img.name, "image has no checksum, skipping download");
+                }
+            }
+        }
+
+        // 6. Sort incoming by dependency priority
         incoming.sort_by_key(|r| kind_priority(r.kind_str()));
 
-        // 6. Run allocate_addresses on merged set, then extract incoming instances
+        // 7. Run allocate_addresses on merged set, then extract incoming instances
         //    with their allocations. Already-stored instances keep existing allocations.
         allocate_addresses(&mut merged)
             .map_err(|e| Status::internal(format!("IP allocation failed: {e}")))?;
@@ -171,7 +189,7 @@ impl StratusService for StratusServer {
             .map(|r| (r.name().to_string(), r))
             .collect();
 
-        // 7. Store each incoming resource (skip if unchanged)
+        // 8. Store each incoming resource (skip if unchanged)
         let mut results = Vec::with_capacity(incoming.len());
         for r in &incoming {
             // Use the allocated version for instances
@@ -276,6 +294,13 @@ impl StratusService for StratusServer {
                 }
                 other => Status::internal(other.to_string()),
             })?;
+
+        if let Some(Resource::Image(ref img)) = old
+            && let Some(ref checksum) = img.checksum
+            && let Err(e) = self.image_cache.evict(checksum)
+        {
+            warn!(name = img.name, error = %e, "failed to evict cached image");
+        }
 
         Ok(Response::new(DeleteResponse {
             found: old.is_some(),

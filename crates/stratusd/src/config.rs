@@ -9,6 +9,10 @@ impl Config {
     pub fn db_path(&self) -> PathBuf {
         self.data_dir.join("stratus.db")
     }
+
+    pub fn images_dir(&self) -> PathBuf {
+        self.data_dir.join("images")
+    }
 }
 
 impl Default for Config {

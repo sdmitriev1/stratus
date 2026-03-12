@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hyper_util::rt::TokioIo;
+use stratus_images::ImageCache;
 use stratus_resources::Resource;
 use stratus_store::WatchableStore;
 use stratusd::proto::stratus_service_client::StratusServiceClient;
@@ -22,13 +23,18 @@ fn start_server(
     socket_path: &std::path::Path,
     store: Arc<WatchableStore>,
 ) -> tokio::sync::oneshot::Sender<()> {
+    let images_dir = socket_path.parent().unwrap().join("images");
+    let image_cache = Arc::new(ImageCache::new(images_dir).expect("failed to create image cache"));
     let listener = UnixListener::bind(socket_path).expect("failed to bind socket");
     let stream = UnixListenerStream::new(listener);
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
     tokio::spawn(async move {
         Server::builder()
-            .add_service(StratusServiceServer::new(StratusServer::new(store)))
+            .add_service(StratusServiceServer::new(StratusServer::new(
+                store,
+                image_cache,
+            )))
             .serve_with_incoming_shutdown(stream, async {
                 rx.await.ok();
             })

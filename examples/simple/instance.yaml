@@ -2,7 +2,7 @@ kind: Instance
 name: dev-vm
 cpus: 2
 memory_mb: 2048
-image: ubuntu-2404
+image: cirros-0.6.3
 interfaces:
   - subnet: default-subnet
     security_groups:

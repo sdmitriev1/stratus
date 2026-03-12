@@ -3,3 +3,17 @@ name = "stratus-images"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+reqwest = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+serde_json = { workspace = true }
+stratus-resources = { path = "../stratus-resources" }
+
+[dev-dependencies]
+tempfile = "3"
+axum = "0.8"
+tokio = { workspace = true, features = ["full"] }
